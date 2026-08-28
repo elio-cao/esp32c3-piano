@@ -80,7 +80,9 @@ jobs:
           fi
 
       - name: Build firmware (PIO + merge_bin.py)
-        run: pio run --environment esp32c3
+        run: |
+          set -o pipefail
+          pio run --environment esp32c3 2>&1 | tee build.log
 
       - name: Merge and verify single image with esptool
         run: |
@@ -102,3 +104,14 @@ jobs:
           path: dist/firmware.bin
           if-no-files-found: error
           retention-days: 14
+
+      # Upload the raw PIO log even when the build fails, so diagnostics are
+      # always retrievable via the artifacts API.
+      - name: Upload build log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
