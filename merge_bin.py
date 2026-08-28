@@ -14,16 +14,12 @@ can flash with one esptool.py command:
 
 PlatformIO runs this as a "post:" extra_script.  The build directory and
 environment name are exposed via env vars (PROJECT_BUILD_DIR, PIOENV)
-which PlatformIO sets automatically, so we do NOT need the SCons
-"Import" function.
+that PlatformIO sets automatically, so we do NOT rely on `__file__`
+(which is undefined inside a SCons exec context).
 """
 
 import os
 import sys
-import shutil
-
-
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _build_dir():
@@ -31,11 +27,13 @@ def _build_dir():
     pioenv = os.environ.get('PIOENV', 'esp32c3')
     if build_dir:
         return os.path.join(build_dir, pioenv)
-    return os.path.join(PROJECT_DIR, ".pio", "build", pioenv)
+    # Fallback for CLI mode: assume CWD is the project root.
+    return os.path.join(os.getcwd(), '.pio', 'build', pioenv)
 
 
 def _dist_dir():
-    return os.path.join(PROJECT_DIR, "dist")
+    # CWD is the project directory when invoked by PlatformIO.
+    return os.path.join(os.getcwd(), 'dist')
 
 
 def _safe_load(bin_path, label):
@@ -58,8 +56,6 @@ def main():
 
     merged_path = os.path.join(dist_dir, "firmware.bin")
     with open(merged_path, "wb") as fp:
-        # The firmware image is appended at the end of the bootloader's
-        # 0x10000-byte slot.  The bootloader ships at the start of flash.
         fp.write(bootloader)
         if len(bootloader) > 0x8000:
             sys.stderr.write("[merge_bin] bootloader larger than 0x8000!\n")
