@@ -25,6 +25,7 @@
 //   * Never any sound              => speaker/amp/PWM or RC-filter path faulty.
 
 #include <Arduino.h>
+#include "USB.h"
 
 #include "audio.h"
 #include "pins.h"
@@ -41,9 +42,10 @@ static void setAmpSd(int level) {
 }
 
 void setup() {
-    Serial.begin(115200);               // USB CDC (ARDUINO_USB_CDC_ON_BOOT=1)
+    USB.begin();                        // bring up the USB-CDC peripheral
+    USBSerial.begin(115200);
     delay(500);                          // let the USB CDC enumerate
-    Serial.println("[ST] boot begin");
+    USBSerial.println("[ST] boot begin");
 
     pinMode(LED_GPIO, OUTPUT);
     digitalWrite(LED_GPIO, LED_OFF_LEVEL);
@@ -59,12 +61,12 @@ void setup() {
         digitalWrite(LED_GPIO, LED_OFF_LEVEL);
         delay(120);
     }
-    Serial.println("[ST] blinks done");
+    USBSerial.println("[ST] blinks done");
 
-    Serial.println("[ST] audio_init ..");
+    USBSerial.println("[ST] audio_init ..");
     audio_init();
     audio_setFrequency(kHighFreq);
-    Serial.println("[ST] audio_init done, should be playing now");
+    USBSerial.println("[ST] audio_init done, should be playing now");
 }
 
 void loop() {
@@ -90,18 +92,18 @@ void loop() {
     if (millis() - s_lastLog >= 1000) {
         s_lastLog = millis();
         const uint32_t t = audio_getIsrTicks();
-        Serial.print("[ST] t=");
-        Serial.print(millis());
-        Serial.print(" isr=");
-        Serial.print(t);
-        Serial.print("(+");
-        Serial.print(t - s_lastIsr);
-        Serial.print(") env=");
-        Serial.print(audio_getEnvelope());
-        Serial.print(" f=");
-        Serial.print(audio_getFrequency(), 1);
-        Serial.print(" Hz SD=");
-        Serial.println(digitalRead(AMP_SD_GPIO) ? "HIGH" : "LOW");
+        USBSerial.print("[ST] t=");
+        USBSerial.print(millis());
+        USBSerial.print(" isr=");
+        USBSerial.print(t);
+        USBSerial.print("(+");
+        USBSerial.print(t - s_lastIsr);
+        USBSerial.print(") env=");
+        USBSerial.print(audio_getEnvelope());
+        USBSerial.print(" f=");
+        USBSerial.print(audio_getFrequency(), 1);
+        USBSerial.print(" Hz SD=");
+        USBSerial.println(digitalRead(AMP_SD_GPIO) ? "HIGH" : "LOW");
         s_lastIsr = t;
     }
 }
