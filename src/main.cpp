@@ -41,6 +41,10 @@ static void setAmpSd(int level) {
 }
 
 void setup() {
+    Serial.begin(115200);               // USB CDC (ARDUINO_USB_CDC_ON_BOOT=1)
+    delay(500);                          // let the USB CDC enumerate
+    Serial.println("[ST] boot begin");
+
     pinMode(LED_GPIO, OUTPUT);
     digitalWrite(LED_GPIO, LED_OFF_LEVEL);
     pinMode(LED2_GPIO, OUTPUT);
@@ -55,9 +59,12 @@ void setup() {
         digitalWrite(LED_GPIO, LED_OFF_LEVEL);
         delay(120);
     }
+    Serial.println("[ST] blinks done");
 
+    Serial.println("[ST] audio_init ..");
     audio_init();
     audio_setFrequency(kHighFreq);
+    Serial.println("[ST] audio_init done, should be playing now");
 }
 
 void loop() {
@@ -76,4 +83,25 @@ void loop() {
     // Keep the synthesis envelope advancing.
     for (int i = 0; i < 2; ++i) audio_tick();
     delay(1);
+
+    // --- 1-second diagnostic report ---------------------------------------
+    static uint32_t s_lastLog = 0;
+    static uint32_t s_lastIsr = 0;
+    if (millis() - s_lastLog >= 1000) {
+        s_lastLog = millis();
+        const uint32_t t = audio_getIsrTicks();
+        Serial.print("[ST] t=");
+        Serial.print(millis());
+        Serial.print(" isr=");
+        Serial.print(t);
+        Serial.print("(+");
+        Serial.print(t - s_lastIsr);
+        Serial.print(") env=");
+        Serial.print(audio_getEnvelope());
+        Serial.print(" f=");
+        Serial.print(audio_getFrequency(), 1);
+        Serial.print(" Hz SD=");
+        Serial.println(digitalRead(AMP_SD_GPIO) ? "HIGH" : "LOW");
+        s_lastIsr = t;
+    }
 }

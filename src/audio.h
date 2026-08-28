@@ -37,6 +37,15 @@ float audio_getFrequency(void);
 /// True if the ISR is currently outputting non-silent samples.
 bool audio_isActive(void);
 
+/// (diagnostic) Number of times the audio sample ISR has fired since reset.
+/// If this stays 0 while the app is running, the audio timer ISR is not
+/// executing and the engine can never produce a tone.
+uint32_t audio_getIsrTicks(void);
+
+/// (diagnostic) Current envelope amplitude 0..255. Lets the console report
+/// whether the envelope is ramping up (indicating the main loop is alive).
+uint8_t audio_getEnvelope(void);
+
 /// Drive the envelope state machine.  Call from loop() at ~200 Hz
 /// (every 5 ms).  Defined as a weak symbol in audio.cpp so the user
 /// can override it (e.g. for a different envelope curve).

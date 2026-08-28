@@ -65,6 +65,9 @@ static volatile uint8_t    s_envOutStep = 0;
 // ISR dispatch handle.
 static hw_timer_t          *s_audioTimer = NULL;
 
+// (diagnostic) Sample counter incremented by the ISR every call.
+volatile uint32_t           g_isrTicks = 0;
+
 // ---------------------------------------------------------------------------
 // Forward decls
 // ---------------------------------------------------------------------------
@@ -164,6 +167,7 @@ static void updateEnvelope() {
 // Audio ISR
 // ---------------------------------------------------------------------------
 static void IRAM_ATTR audio_isr(void) {
+    ++g_isrTicks;
     // Hold the silent duty if there is nothing to play.  The LEDC
     // hardware keeps the channel configured, so writes are cheap.
     if (s_envelope == 0) {
@@ -256,6 +260,14 @@ float audio_getFrequency(void) {
 
 bool audio_isActive(void) {
     return s_envelope > 0;
+}
+
+uint32_t audio_getIsrTicks(void) {
+    return g_isrTicks;
+}
+
+uint8_t audio_getEnvelope(void) {
+    return s_envelope;
 }
 
 // ---------------------------------------------------------------------------
