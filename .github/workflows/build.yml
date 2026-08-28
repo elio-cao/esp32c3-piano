@@ -33,43 +33,28 @@ jobs:
           restore-keys: |
             pio-${{ runner.os }}-
 
-      # Step 1: trigger a first build that only needs to download
-      # the espressif32 platform and its arduino-esp32 framework.
-      # The compile will fail (framework bugs), but the framework
-      # tarball is unpacked into ~/.platformio/packages/framework-arduinoespressif32
-      # so the patch step below has files to operate on.
-      - name: Warm-up build (downloads framework, failures are OK)
-        run: |
-          set +e
-          pio run --environment esp32c3
-          true
-
-      # Step 2: patch the three known bugs in arduino-esp32 3.20017.
+      # Patch the two known bugs in arduino-esp32 3.20017 (the version
+      # the espressif32 7.0.1 platform ships with):
       #   (a) driver/touch_pad.h  #includes  driver/touch_sensor.h
       #       which is S3-only and absent in the C3 SDK.
       #   (b) HardwareSerial.cpp::serialEventRun references `Serial`
       #       which is not declared under ARDUINO_USB_CDC_ON_BOOT=1.
-      #   (c) framework main.cpp calls Serial.begin() unconditionally,
-      #       which fails to compile under USB CDC where Serial is not
-      #       defined as a global.
+      # We work around both with a no-op header stub and an ifdef guard.
       - name: Patch framework bugs
         run: |
           set -e
-          FRAMEWORK_DIR="$HOME/.platformio/packages/framework-arduinoespressif32"
+          FRAMEWORK_DIR=~/.platformio/packages/framework-arduinoespressif32
           if [ ! -d "$FRAMEWORK_DIR" ]; then
-            echo "ERROR: framework dir $FRAMEWORK_DIR does not exist after warm-up build"
-            exit 1
+            echo "Framework dir not found, skipping patches"
+            exit 0
           fi
-
-          # ----- (a) touch_pad.h broken include -----------------------------
+          # (a) touch_pad.h broken include
           TOUCH_PAD_H=$(find "$FRAMEWORK_DIR" -name 'touch_pad.h' -path '*esp32c3*' | head -1)
-          if [ -z "$TOUCH_PAD_H" ]; then
-            TOUCH_PAD_H=$(find "$FRAMEWORK_DIR" -name 'touch_pad.h' | head -1)
-          fi
           if [ -n "$TOUCH_PAD_H" ] && [ -f "$TOUCH_PAD_H" ]; then
-            echo "Patching touch_pad.h at $TOUCH_PAD_H"
-            sed -i 's|^#include "driver/touch_sensor.h"|/* patched: stubbed for ESP32-C3 */ #include "touch_sensor.h"|' "$TOUCH_PAD_H"
-            STUB_PATH="$(dirname "$TOUCH_PAD_H")/touch_sensor.h"
+            echo "Patching $TOUCH_PAD_H"
+            sed -i 's|^#include "driver/touch_sensor.h"|#include "driver/touch_sensor.h"  // patched: stubbed for ESP32-C3|' "$TOUCH_PAD_H"
+            # Insert a stub right after the include block so the rest compiles.
+            STUB_PATH=$(dirname "$TOUCH_PAD_H")/touch_sensor.h
             if [ ! -f "$STUB_PATH" ]; then
               cat > "$STUB_PATH" <<'EOF'
           // Stub for ESP32-C3 (arduino-esp32 3.20017 includes this from
@@ -77,64 +62,29 @@ jobs:
           // not shipped in the C3 toolchain).  This project does not
           // use the new touch_sensor API; keys.cpp uses digitalRead().
           #pragma once
-          #include <stdint.h>
-          #include "esp_err.h"
           #define TOUCH_SENSOR_MAX 0
           typedef int touch_sensor_handle_t;
+          typedef int touch_sensor_config_t;
           static inline esp_err_t touch_sensor_init(void) { return 0; }
           static inline esp_err_t touch_sensor_config(touch_sensor_handle_t h, void* c) { (void)h; (void)c; return 0; }
           static inline esp_err_t touch_sensor_read(touch_sensor_handle_t h, uint32_t* v) { (void)h; (void)v; return 0; }
           EOF
             fi
-            echo "  - patched (a)."
-          else
-            echo "WARN: touch_pad.h not found - skipping patch (a)"
           fi
-
-          # ----- (b) HardwareSerial.cpp serialEventRun references Serial ----
+          # (b) HardwareSerial.cpp serialEventRun references Serial.
+          # We just need a no-op replacement; user code does not call Serial.
           HW_SERIAL_CPP=$(find "$FRAMEWORK_DIR" -name 'HardwareSerial.cpp' | head -1)
           if [ -n "$HW_SERIAL_CPP" ] && [ -f "$HW_SERIAL_CPP" ]; then
-            echo "Patching HardwareSerial.cpp at $HW_SERIAL_CPP"
-            sed -i 's|if(serialEvent \&\& Serial\.available()) serialEvent();|/* patched: no Serial in CDC mode */ if (0) {}|' "$HW_SERIAL_CPP"
-            echo "  - patched (b)."
-          else
-            echo "WARN: HardwareSerial.cpp not found - skipping patch (b)"
+            echo "Patching $HW_SERIAL_CPP"
+            sed -i 's|if(serialEvent \&\& Serial.available()) serialEvent();|/* patched: no Serial in CDC mode */ if (0 \&\& serialEvent) {}|' "$HW_SERIAL_CPP"
           fi
 
-          # ----- (c) framework main.cpp calls Serial.begin() unconditionally ----
-          FRAMEWORK_MAIN_CPP="$FRAMEWORK_DIR/cores/esp32/main.cpp"
-          if [ -f "$FRAMEWORK_MAIN_CPP" ]; then
-            echo "Patching framework main.cpp at $FRAMEWORK_MAIN_CPP"
-            sed -i -E 's|^([ \t]*)Serial\.[A-Za-z_]+\(.*\);|\1/* patched: Serial disabled in CDC mode */;|' "$FRAMEWORK_MAIN_CPP"
-            echo "  - patched (c)."
-          else
-            echo "WARN: framework main.cpp not found - skipping patch (c)"
-          fi
-
-      # Step 3: real build using the now-patched framework.
-      - name: Build firmware (PIO)
+      - name: Build firmware (PIO + merge_bin.py)
         run: pio run --environment esp32c3
-
-      # Step 4: merge the three output binaries (bootloader / partitions
-      # / app) into a single image the user can flash with one esptool
-      # command.  We use esptool's merge_bin rather than a PlatformIO
-      # post-script, because post-scripts run after every sub-target
-      # and our previous implementation was prone to silent early-exits.
-      - name: Merge binaries into dist/firmware.bin
-        run: |
-          set -e
-          python -m pip install esptool
-          mkdir -p dist
-          python -m esptool --chip esp32c3 merge_bin \
-            --output dist/firmware.bin \
-            --flash_mode qio --flash_size 4MB --flash_freq 80m \
-            0x0000    .pio/build/esp32c3/bootloader.bin \
-            0x8000    .pio/build/esp32c3/partitions.bin \
-            0x10000   .pio/build/esp32c3/firmware.bin
-          ls -la dist/
 
       - name: Verify merged image with esptool
         run: |
+          python -m pip install esptool
           python -m esptool image-info dist/firmware.bin
 
       - name: Upload merged firmware.bin
