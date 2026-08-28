@@ -33,6 +33,7 @@ static bool s_initialised = false;
 // ---------------------------------------------------------------------------
 static void sampleRaw() {
     for (int i = 0; i < NUM_KEYS; ++i) {
+        if (kKeyGpio[i] < 0) { s_raw[i] = false; continue; } // disabled slot
         const int level = digitalRead(kKeyGpio[i]);
         s_raw[i] = (level == KEY_ACTIVE_LEVEL);
     }
@@ -67,6 +68,7 @@ void keys_init(void) {
     memset(s_state, 0, sizeof(s_state));
     for (int i = 0; i < NUM_KEYS; ++i) {
         s_rawChangedAt[i] = 0;
+        if (kKeyGpio[i] < 0) continue;                // disabled slot
         // Enable internal pull-up so an unconnected pad reads HIGH
         // (inactive) by default.  This matches KEY_ACTIVE_LEVEL = HIGH.
         pinMode(kKeyGpio[i], INPUT_PULLUP);
