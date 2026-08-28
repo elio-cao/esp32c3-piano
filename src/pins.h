@@ -76,6 +76,12 @@
 // for an open-collector / open-drain output.
 #define NUM_KEYS              8
 
+// Use -1 to mark a key slot as DISABLED: keys_init() will not touch that pin
+// and the debounce state stays permanently "not pressed".  This is used to
+// bypass GPIO0 (key 7 / TP8) on boards where the netlist pulls GPIO0 to 5V
+// (which exceeds the absolute maximum of the ESP32-C3 IO and prevents the
+// chip from booting, see README "Bypassing GPIO0").  Re-enable by replacing
+// the -1 with GPIO_NUM_0 and fixing the PCB pull-up.
 static const int kKeyGpio[NUM_KEYS] = {
     GPIO_NUM_2,  // key 0 (TP1)
     GPIO_NUM_3,  // key 1 (TP2)
@@ -84,7 +90,9 @@ static const int kKeyGpio[NUM_KEYS] = {
     GPIO_NUM_6,  // key 4 (TP5)
     GPIO_NUM_7,  // key 5 (TP6)
     GPIO_NUM_1,  // key 6 (TP7) - via TTP223 U4
-    GPIO_NUM_0,  // key 7 (TP8) - via TTP223 U16
+    -1,          // key 7 (TP8) - DISABLED: GPIO0 conflicts with the +5V
+                 // pull-up on this PCB.  See main.cpp gpio_reset_pin()
+                 // workaround and README "Bypassing GPIO0".
 };
 
 #define KEY_ACTIVE_LEVEL      HIGH
