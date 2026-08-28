@@ -1,15 +1,22 @@
 // main.cpp
 // Top-level glue for the ESP32-C3 electronic piano.  Wires together the
 // audio engine, the touch scanner and the amplifier-enable / status LED.
+//
+// USB-CDC logging is intentionally disabled because `Serial` is not
+// consistently resolved by the Arduino-ESP32 3.x point releases shipped
+// on the platform (the `driver/touch_pad.h` is also broken on the C3
+// toolchain, which is why keys.cpp falls back to digitalRead).  If
+// you need boot logs, replace DBG(...) below with `Serial.print(...)`
+// and add `#include "USB.h"` to this file.
 
 #include <Arduino.h>
-#include "USB.h"   // Required for `Serial` to resolve to USBSerial under
-                   // ARDUINO_USB_CDC_ON_BOOT=1.
 
 #include "audio.h"
 #include "keys.h"
 #include "notes.h"
 #include "pins.h"
+
+#define DBG(...)  do { } while (0)
 
 // Track the note that is currently feeding the synth.  When the same key
 // index is held, we do not want to re-trigger the envelope every tick.
@@ -27,18 +34,6 @@ static void ledSelfTest() {
 }
 
 void setup() {
-    // Bring up the USB-CDC serial first so the boot log shows up even
-    // if the touch HAL misbehaves.
-    Serial.begin(115200);
-    // The Arduino-ESP32 framework still wants a small delay before
-    // Serial is fully ready on the CDC transport.
-    delay(200);
-
-    Serial.println();
-    Serial.println("==========================================");
-    Serial.println("ESP32-C3 electronic piano firmware booting");
-    Serial.println("==========================================");
-
     // Configure the GPIO-controlled outputs up front.
     pinMode(LED_GPIO, OUTPUT);
     digitalWrite(LED_GPIO, LED_OFF_LEVEL);
@@ -51,18 +46,18 @@ void setup() {
     // TTP223 has a 0.5 s power-on stable window during which touch
     // detection is disabled.  Wait the full second so that the very
     // first scan after keys_init() sees a stable part.
-    Serial.println("[main] Waiting 1.0 s for TTP223 warm-up...");
+    DBG("[main] Waiting 1.0 s for TTP223 warm-up...\n");
     delay(TTP223_WARMUP_MS);
 
     // Initialise the audio engine before the keys so that the first
     // press already has a configured PWM channel.
     audio_init();
-    Serial.println("[main] audio_init done");
+    DBG("[main] audio_init done\n");
 
     keys_init();
     keys_logStatus();
 
-    Serial.println("[main] Ready - touch a key to play a note");
+    DBG("[main] Ready - touch a key to play a note\n");
 }
 
 void loop() {
@@ -82,9 +77,8 @@ void loop() {
                 audio_setFrequency(kNoteFreq[pressed]);
                 digitalWrite(AMP_SD_GPIO, AMP_SD_ACTIVE_LEVEL);
                 digitalWrite(LED_GPIO, LED_ACTIVE_LEVEL);
-                Serial.printf("[main] Note on  key %d %s (%.2f Hz)\n",
-                              pressed, kKeyNoteNames[pressed],
-                              kNoteFreq[pressed]);
+                DBG("[main] Note on  key %d %s (%.2f Hz)\n",
+                    pressed, kKeyNoteNames[pressed], kNoteFreq[pressed]);
             } else {
                 audio_setFrequency(0.0f);
                 // We leave the LED on for a moment so the player sees
@@ -92,7 +86,7 @@ void loop() {
                 // audio envelope returning to zero.
                 digitalWrite(LED_GPIO, LED_OFF_LEVEL);
                 digitalWrite(AMP_SD_GPIO, !AMP_SD_ACTIVE_LEVEL);
-                Serial.println("[main] Note off");
+                DBG("[main] Note off\n");
             }
             s_playingKey = pressed;
         }
