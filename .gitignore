@@ -1,0 +1,4 @@
+.pio/
+dist/
+build.log
+esp32c3_piano_src.zip
