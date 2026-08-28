@@ -1,76 +1,72 @@
-// main.cpp  -  AUDIO STRENGTH / AMP-SD POLARITY TEST build (temporary)
+// main.cpp
+// ESP32-C3 8-key touch piano — production firmware.
 //
-// Purpose: determine (a) whether the amplifier/speaker chain produces sound at
-// all, and (b) the correct SD enable polarity (active-HIGH vs active-LOW).
+// Loop: scan the 8 touch keys, map each to a note frequency, drive the
+// monophonic synth (audio.cpp) and mirror key activity on the blue status
+// LED (GPIO21). The amp is left enabled (AMP_SD_ACTIVE_LEVEL, which is LOW
+// for the NS4165B) so pressing a key is heard immediately.
 //
-// Behaviour (loops forever):
-//   - A LOUD 440 Hz full-scale square wave is produced on the audio PWM pin
-//     (GPIO20) via a bare LEDC duty toggle -- bypassing the synth engine so a
-//     weak-amplitude signal cannot be the excuse.
-//   - The amp SD pin (GPIO10) is held for 5 seconds at HIGH, then 5 s at LOW,
-//     alternating.  The blue status LED (GPIO21) is ON during SD=HIGH and OFF
-//     during SD=LOW, so the user always knows which polarity is active.
-//   - A diagnostic line is printed once per second over USB-CDC.
-//
-// Interpretation:
-//   * SD=HIGH plays AND SD=LOW is silent  -> SD is active-HIGH (as pins.h).
-//   * SD=LOW  plays AND SD=HIGH is silent -> SD is active-LOW, flip
-//     AMP_SD_ACTIVE_LEVEL in pins.h.
-//   * Loud continuous tone on BOTH -> chain OK, both polarities partly work.
-//   * No sound on EITHER polarity  -> amp/speaker/power/input hard fault.
-//
-// Library note: arduino-esp32 3.20017 core declares the USB-CDC stream as
-// `Serial` only under ARDUINO_USB_MODE=1, so we keep that build flag.
+// Uses the plain-digital touch HAL workaround described in pins.h.
 
 #include <Arduino.h>
 #include "USB.h"
-#include "pins.h"
 
-static const int  kCh    = AUDIO_PWM_CHANNEL;
-static const int  kRes   = AUDIO_PWM_RES_BITS;   // 10 bits 0..1023
-static const int  kFreq  = 440;                    // test tone Hz
+#include "pins.h"
+#include "notes.h"
+#include "audio.h"
+#include "keys.h"
+
+static bool  s_keyActive = false;
+static float s_noteFreq  = 0.0f;
 
 void setup() {
     pinMode(LED_GPIO, OUTPUT);
-    pinMode(AMP_SD_GPIO, OUTPUT);
+    digitalWrite(LED_GPIO, LED_OFF_LEVEL);
 
-    // Loud full-scale square wave via a plain LEDC duty toggle.
-    ledcSetup(kCh, AUDIO_PWM_FREQ_HZ, kRes);
-    ledcAttachPin(AUDIO_PWM_GPIO, kCh);
-    ledcWrite(kCh, AUDIO_PWM_MAX);
+    pinMode(AMP_SD_GPIO, OUTPUT);
+    // NS4165B SD is active-LOW; AMP_SD_ACTIVE_LEVEL==LOW enables the amp.
+    digitalWrite(AMP_SD_GPIO, AMP_SD_ACTIVE_LEVEL);
+
+    // Allow the USB-CDC / TTP223 to stabilise before reading the keys.
+    digitalWrite(LED_GPIO, LED_ACTIVE_LEVEL);
+    delay(TTP223_WARMUP_MS);
+    digitalWrite(LED_GPIO, LED_OFF_LEVEL);
+
+    keys_init();
+    audio_init();
+
+    // Boot indicator: three short blinks.
+    for (int i = 0; i < 3; i++) {
+        digitalWrite(LED_GPIO, LED_ACTIVE_LEVEL);
+        delay(80);
+        digitalWrite(LED_GPIO, LED_OFF_LEVEL);
+        delay(80);
+    }
 
     Serial.begin(115200);
-    delay(500);              // let USB-CDC enumerate
-    Serial.println("[ST] AUDIO_STRENGTH_TEST v3");
+    delay(300);
+    Serial.println("[PIANO] boot OK, amp enabled (SD="
+                   + String((int)AMP_SD_ACTIVE_LEVEL) + ")");
 }
 
 void loop() {
-    const uint32_t now = millis();
+    const bool any = keys_tick();
+    const int  k   = keys_lastPressed();
 
-    // 5 s SD=HIGH window, then 5 s SD=LOW, repeating.
-    const bool sdHigh = ((now / 5000UL) % 2) == 0;
-
-    // Blue status LED mirrors the polarity window (ON = SD HIGH now).
-    digitalWrite(AMP_SD_GPIO, sdHigh ? HIGH : LOW);
-    digitalWrite(LED_GPIO,    sdHigh ? HIGH : LOW);
-
-    // 440 Hz full-scale square wave: toggle duty every half period.
-    static uint32_t s_last = 0;
-    static int      s_lev  = 0;
-    const uint32_t nowUs = micros();
-    if ((int32_t)(nowUs - s_last) >= (1000000UL / (2 * kFreq))) {
-        s_last = nowUs;
-        s_lev = !s_lev;
-        ledcWrite(kCh, s_lev ? AUDIO_PWM_MAX : 0);
+    float freq = 0.0f;
+    if (k >= 0 && k < NUM_KEYS) {
+        freq = kNoteFreq[k];
     }
 
-    // 1 s diagnostic line so the host can verify GPIO20 is actually toggling.
-    static uint32_t s_lastReport = 0;
-    if (now - s_lastReport >= 1000) {
-        s_lastReport = now;
-        Serial.print("[ST] SD=");
-        Serial.print(sdHigh ? "HIGH(5s)" : "LOW(5s)");
-        Serial.print(" tone=440Hz full-duty GPIO20, t=");
-        Serial.println(now);
+    // Only touch the synth when the requested note actually changed.
+    if (freq != s_noteFreq || any != s_keyActive) {
+        audio_setFrequency(freq);
+        s_noteFreq  = freq;
+        s_keyActive = any;
     }
+
+    digitalWrite(LED_GPIO, any ? LED_ACTIVE_LEVEL : LED_OFF_LEVEL);
+
+    audio_tick();        // ~200 Hz envelope driver
+    delay(5);
 }
