@@ -139,6 +139,67 @@ esp32c3_piano/
 | Key 7 (TP7)      | 1    | TTP223-BA6, 1 s warm-up                |
 | Key 8 (TP8)      | 0    | TTP223-BA6, 1 s warm-up                |
 
+## Debug status (session 2026-08-28)
+
+The board was bench-tested end-to-end and three issues were uncovered that
+this section documents so a future build can resolve them in one pass.
+
+### 1. Flash configuration must be DIO/40MHz on this board
+The original `qio/80m` bootloader header, when flashed onto this bare
+ESP32-C3FH4 module, made `second-stage bootloader` trip its own WDT in a
+loop (`ets_loader.c 78 ...` reset storm). Switching to
+`dio/40m/4MB` lets the chip boot reliably. All `esptool write_flash`
+commands in this repo must use:
+
+```
+--flash_mode dio --flash_freq 40m --flash_size 4MB
+```
+
+### 2. NS4165B amplifier enable polarity is LOW
+The on-board amplifier is an NS4165B (eSOP8 AB/D audio amp), NOT a
+PAM8403. Per its datasheet:
+
+| SD pin level | behaviour            |
+|--------------|----------------------|
+| LOW          | **normal operation** |
+| HIGH         | shutdown (muted)     |
+
+Therefore `AMP_SD_ACTIVE_LEVEL` in `src/pins.h` must be `LOW`. The
+10 kΩ pull-down on R5 keeps SD low at boot so the amp wakes up enabled.
+`main.cpp` now drives SD to `LOW` after `keys_init()`.
+
+### 3. GPIO0 (TP8) needs software bypass on this PCB layout
+The 16-pin module boots fine on its own. As soon as it is seated on
+this PCB the chip stops reaching `setup()` (no blue-LED 3-blink, USB
+COM disappears). The root cause is the way the 8 keys are wired to
+GPIO2..GPIO7 + GPIO0/GPIO1 strapping pins (the A/B test of pulling
+GPIO8 low and disconnecting GPIO0's pull-up did NOT bring the chip
+back, so the issue is not a single strapping pin but the whole module
+losing its boot flow on this PCB).
+
+Until the PCB is reworked, `kKeyGpio[7]` is set to `-1` (disabled)
+and `main.cpp` calls `gpio_reset_pin(0)` + `pinMode(0, INPUT_DISABLE)`
+in `setup()` so GPIO0 cannot source/sink into the unknown external
+circuit. TP8 is therefore **not responsive**; the other 7 keys still
+work normally.
+
+To re-enable TP8, do BOTH of:
+1. Set `kKeyGpio[7] = GPIO_NUM_0` in `src/pins.h`.
+2. Remove the `gpio_reset_pin(0)` block in `src/main.cpp`.
+
+### Build pipeline state
+GitHub Actions runs of the `Build ESP32-C3 piano firmware` workflow
+were consistently failing during the `Tool Manager` step
+(`espressif/toolchain-riscv32-esp @ 8.4.0+2021r2-patch5` download
+timeout) on 2026-08-28 UTC evening. Local PlatformIO reproduction
+also stalls on the same toolchain download. The source tree is in a
+buildable state — the next run after GitHub's package CDN recovers
+should produce `dist/firmware.bin` (≈ 331 kB).
+
+`dist/firmware_piano_v3_backup.bin` is the most recently confirmed
+buildable image (NS4165B LOW-active SD, GPIO0 bypassed) — keep it
+as a recovery artifact until the next CI build succeeds.
+
 ## License
 
 MIT.
