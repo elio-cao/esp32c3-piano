@@ -48,6 +48,12 @@ jobs:
           find ~/.platformio/packages/framework-arduinoespressif32 -name 'touch_pad.h' 2>/dev/null || true
           echo "--- look for HardwareSerial.cpp ---"
           find ~/.platformio/packages/framework-arduinoespressif32 -name 'HardwareSerial.cpp' 2>/dev/null || true
+          echo "--- look for framework main.cpp (caller of Serial) ---"
+          find ~/.platformio/packages/framework-arduinoespressif32 -name 'main.cpp' 2>/dev/null
+          for f in $(find ~/.platformio/packages/framework-arduinoespressif32 -name 'main.cpp' 2>/dev/null); do
+            echo "=== $f ==="
+            sed -n '50,70p' "$f" || true
+          done
           true   # never fail this step
 
       # Step 2: patch the two known bugs in arduino-esp32 3.20017.
