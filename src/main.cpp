@@ -3,6 +3,8 @@
 // audio engine, the touch scanner and the amplifier-enable / status LED.
 
 #include <Arduino.h>
+#include "USB.h"   // Required for `Serial` to resolve to USBSerial under
+                   // ARDUINO_USB_CDC_ON_BOOT=1.
 
 #include "audio.h"
 #include "keys.h"
