@@ -26,7 +26,7 @@ if "%PORT%"=="" (
 )
 
 echo [flash] Flashing %FW% to %PORT% ...
-python -m esptool --chip %CHIP% -p %PORT% write_flash 0x0 "%FW%"
+python -m esptool --chip %CHIP% -p %PORT% --flash-mode qio --flash-size 4MB --flash-freq 80m write_flash 0x0 "%FW%"
 if errorlevel 1 (
     echo [flash] esptool returned an error.
     exit /b 3
