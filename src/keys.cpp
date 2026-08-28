@@ -10,6 +10,7 @@
 #include "notes.h"
 
 #include <Arduino.h>
+#include "USB.h"   // For `Serial` under ARDUINO_USB_CDC_ON_BOOT=1.
 #include <string.h>
 
 // ---------------------------------------------------------------------------
