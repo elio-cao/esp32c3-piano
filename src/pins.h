@@ -43,10 +43,14 @@
 #define AUDIO_PWM_MAX         ((1 << AUDIO_PWM_RES_BITS) - 1) // 1023
 
 // ----- Amplifier enable ---------------------------------------------------
-// U3 is held in shutdown by R5 (10 k pull-down). Driving GPIO10 high wakes
-// the part. Keep it LOW at boot so we do not pop the speaker.
+// U3 = NS4165B (eSOP8 AB/D audio amp). From the datasheet:
+//   SD (pin1): LOW  = normal operation (enabled)
+//              HIGH = shutdown (muted)
+// GPIO10 -> R5 (10k pull-down) -> SD. Because the pull-down already keeps
+// SD LOW, the part is enabled by default; the only reason to now drive the
+// pin is to force shut-down, so the ACTIVE level here is the ENABLE level.
 #define AMP_SD_GPIO           GPIO_NUM_10
-#define AMP_SD_ACTIVE_LEVEL   HIGH
+#define AMP_SD_ACTIVE_LEVEL   LOW
 
 // ----- Status LED ---------------------------------------------------------
 // GPIO21 -> R1 (1k) -> LED1 -> GND. Blinks on boot, steady on while a key
