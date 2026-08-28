@@ -33,48 +33,44 @@ jobs:
           restore-keys: |
             pio-${{ runner.os }}-
 
-      # Pre-fetch the espressif32 platform + its arduino framework so the
-      # patch step below has a populated framework dir to operate on.
-      # `pio pkg install -g -p espressif32` downloads the platform and
-      # all of its default tools (including framework-arduinoespressif32
-      # 3.20017.x) without actually compiling anything.
-      - name: Pre-fetch espressif32 platform + framework
+      # Step 1: trigger a first build that only needs to download
+      # the espressif32 platform and its arduino-esp32 framework.
+      # The compile will fail (framework bugs), but the framework
+      # tarball is unpacked into ~/.platformio/packages/framework-arduinoespressif32
+      # so the patch step below has files to operate on.
+      - name: Warm-up build (downloads framework, failures are OK)
         run: |
-          set -e
-          pio pkg install -g -p espressif32
-          echo "--- framework dir contents ---"
-          ls -la ~/.platformio/packages/framework-arduinoespressif32 | head -40 || true
+          set +e
+          pio run --environment esp32c3
+          echo "--- framework dir contents after warm-up ---"
+          ls -la ~/.platformio/packages/framework-arduinoespressif32 2>&1 | head -40 || true
           echo "--- look for touch_pad.h ---"
-          find ~/.platformio/packages/framework-arduinoespressif32 -name 'touch_pad.h' || true
+          find ~/.platformio/packages/framework-arduinoespressif32 -name 'touch_pad.h' 2>/dev/null || true
           echo "--- look for HardwareSerial.cpp ---"
-          find ~/.platformio/packages/framework-arduinoespressif32 -name 'HardwareSerial.cpp' || true
+          find ~/.platformio/packages/framework-arduinoespressif32 -name 'HardwareSerial.cpp' 2>/dev/null || true
+          true   # never fail this step
 
-      # Patch the two known bugs in arduino-esp32 3.20017 (the version
-      # the espressif32 7.0.1 platform ships with):
+      # Step 2: patch the two known bugs in arduino-esp32 3.20017.
       #   (a) driver/touch_pad.h  #includes  driver/touch_sensor.h
       #       which is S3-only and absent in the C3 SDK.
       #   (b) HardwareSerial.cpp::serialEventRun references `Serial`
       #       which is not declared under ARDUINO_USB_CDC_ON_BOOT=1.
-      # We work around both with a no-op header stub and an ifdef guard.
       - name: Patch framework bugs
         run: |
           set -e
           FRAMEWORK_DIR="$HOME/.platformio/packages/framework-arduinoespressif32"
           if [ ! -d "$FRAMEWORK_DIR" ]; then
-            echo "ERROR: framework dir $FRAMEWORK_DIR does not exist after prefetch"
+            echo "ERROR: framework dir $FRAMEWORK_DIR does not exist after warm-up build"
             exit 1
           fi
 
           # ----- (a) touch_pad.h broken include -----------------------------
           TOUCH_PAD_H=$(find "$FRAMEWORK_DIR" -name 'touch_pad.h' -path '*esp32c3*' | head -1)
           if [ -z "$TOUCH_PAD_H" ]; then
-            # Fall back to searching anywhere in the framework.
             TOUCH_PAD_H=$(find "$FRAMEWORK_DIR" -name 'touch_pad.h' | head -1)
           fi
           if [ -n "$TOUCH_PAD_H" ] && [ -f "$TOUCH_PAD_H" ]; then
             echo "Patching touch_pad.h at $TOUCH_PAD_H"
-            # Comment out the bad include so the rest of the header still
-            # parses, then drop a stub next to it.
             sed -i 's|^#include "driver/touch_sensor.h"|/* patched: stubbed for ESP32-C3 */ #include "touch_sensor.h"|' "$TOUCH_PAD_H"
             STUB_PATH="$(dirname "$TOUCH_PAD_H")/touch_sensor.h"
             if [ ! -f "$STUB_PATH" ]; then
@@ -93,6 +89,7 @@ jobs:
           static inline esp_err_t touch_sensor_read(touch_sensor_handle_t h, uint32_t* v) { (void)h; (void)v; return 0; }
           EOF
             fi
+            echo "  - patched."
           else
             echo "WARN: touch_pad.h not found - skipping patch (a)"
           fi
@@ -102,10 +99,12 @@ jobs:
           if [ -n "$HW_SERIAL_CPP" ] && [ -f "$HW_SERIAL_CPP" ]; then
             echo "Patching HardwareSerial.cpp at $HW_SERIAL_CPP"
             sed -i 's|if(serialEvent \&\& Serial\.available()) serialEvent();|/* patched: no Serial in CDC mode */ if (0) {}|' "$HW_SERIAL_CPP"
+            echo "  - patched."
           else
             echo "WARN: HardwareSerial.cpp not found - skipping patch (b)"
           fi
 
+      # Step 3: real build using the now-patched framework.
       - name: Build firmware (PIO + merge_bin.py)
         run: pio run --environment esp32c3
 
