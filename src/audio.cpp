@@ -129,8 +129,8 @@ static void setupTimer() {
     // counter ticks at 1 MHz; we then ask the hardware to count to
     // 1_000_000 / 44_100 ticks between ISRs.
     s_audioTimer = timerBegin(0, 80, true);  // 80 MHz / 80 = 1 MHz tick
-    const uint32_t alarmValue = 1000000UL / kSampleRateHz;  // ~22
-    timerAlarmWrite(s_audioTimer, alarmValue, true /* auto-reload */, true /* reload-from-zero */);
+    const uint64_t alarmValue = 1000000ULL / kSampleRateHz;  // ~22
+    timerAlarmWrite(s_audioTimer, alarmValue, true /* auto-reload */);
     timerAttachInterrupt(s_audioTimer, &audio_isr, true);
     timerAlarmEnable(s_audioTimer);
 }
