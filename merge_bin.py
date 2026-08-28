@@ -11,30 +11,27 @@ This script merges them into a single "dist/firmware.bin" that the user
 can flash with one esptool.py command:
 
     python -m esptool --chip esp32c3 -p COMx write_flash 0x0 dist/firmware.bin
+
+PlatformIO runs this as a "post:" extra_script.  The build directory and
+environment name are exposed via env vars (PROJECT_BUILD_DIR, PIOENV)
+which PlatformIO sets automatically, so we do NOT need the SCons
+"Import" function.
 """
 
 import os
 import sys
 import shutil
 
-# SCons / PlatformIO passes us the build environment as the second CLI
-# argument (when invoked via `extra_scripts = post:merge_bin.py`).
-Import = None
-try:
-    Import("env")  # noqa: F821 - injected by PlatformIO
-except NameError:
-    Import = None  # type: ignore
 
-# We may also be invoked from the command line for debugging.
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _build_dir():
-    if Import is not None:
-        return os.path.join(str(Import("PROJECT_BUILD_DIR")),
-                            Import("PIOENV"))  # type: ignore
-    # Fall back to the conventional PlatformIO path.
-    return os.path.join(PROJECT_DIR, ".pio", "build", "esp32c3")
+    build_dir = os.environ.get('PROJECT_BUILD_DIR')
+    pioenv = os.environ.get('PIOENV', 'esp32c3')
+    if build_dir:
+        return os.path.join(build_dir, pioenv)
+    return os.path.join(PROJECT_DIR, ".pio", "build", pioenv)
 
 
 def _dist_dir():
@@ -64,13 +61,11 @@ def main():
         # The firmware image is appended at the end of the bootloader's
         # 0x10000-byte slot.  The bootloader ships at the start of flash.
         fp.write(bootloader)
-        # Pad to 0x8000 (partitions slot).
         if len(bootloader) > 0x8000:
             sys.stderr.write("[merge_bin] bootloader larger than 0x8000!\n")
             sys.exit(2)
         fp.write(b"\xff" * (0x8000 - len(bootloader)))
         fp.write(partitions)
-        # Pad to 0x10000 (application slot).
         fp.write(b"\xff" * (0x8000 - len(partitions)))
         fp.write(app)
 
@@ -82,6 +77,6 @@ def main():
 if __name__ == "__main__":
     sys.exit(main())
 else:
-    # PlatformIO calls us as a SCons extension.  The "env" object is the
-    # build environment; we don't need anything from it.
+    # PlatformIO may import this file as a SCons post-script.  Run
+    # main() unconditionally so the merged image is always produced.
     main()
