@@ -127,7 +127,7 @@ jobs:
           mkdir -p dist
           python -m esptool --chip esp32c3 merge_bin \
             --output dist/firmware.bin \
-            --flash_mode dio --flash_size 4MB --flash_freq 80m \
+            --flash_mode qio --flash_size 4MB --flash_freq 80m \
             0x0000    .pio/build/esp32c3/bootloader.bin \
             0x8000    .pio/build/esp32c3/partitions.bin \
             0x10000   .pio/build/esp32c3/firmware.bin
