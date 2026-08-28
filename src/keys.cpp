@@ -10,8 +10,14 @@
 #include "notes.h"
 
 #include <Arduino.h>
-#include "USB.h"   // For `Serial` under ARDUINO_USB_CDC_ON_BOOT=1.
 #include <string.h>
+
+// USB-CDC `Serial` is not consistently exposed across Arduino-ESP32
+// 3.x point releases, so we deliberately avoid it here.  All logging
+// goes through the macro below; if you want to re-enable logs over the
+// USB-CDC port, just `#include "USB.h"` and replace DBG(...) with
+// `Serial.print(...)`.
+#define DBG(...)  do { } while (0)
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -68,7 +74,7 @@ void keys_init(void) {
     s_lastPressed = -1;
 
     s_initialised = true;
-    Serial.println("[keys] initialised (digitalRead on 8 GPIOs)");
+    DBG("[keys] initialised (digitalRead on 8 GPIOs)");
 }
 
 bool keys_tick(void) {
@@ -87,16 +93,14 @@ int keys_lastPressed(void) {
 }
 
 void keys_logStatus(void) {
-    Serial.print("[keys] GPIO map: ");
+    DBG("[keys] GPIO map: ");
     for (int i = 0; i < NUM_KEYS; ++i) {
-        Serial.printf("K%d=GPIO%d ", i, (int)kKeyGpio[i]);
+        DBG("K%d=GPIO%d ", i, (int)kKeyGpio[i]);
     }
-    Serial.println();
-    Serial.print("[keys] Last pressed: ");
+    DBG("\n[keys] Last pressed: ");
     if (s_lastPressed < 0) {
-        Serial.println("(none)");
+        DBG("(none)");
     } else {
-        Serial.printf("key %d (%s)\n", s_lastPressed,
-                      kKeyNoteNames[s_lastPressed]);
+        DBG("key %d (%s)", s_lastPressed, kKeyNoteNames[s_lastPressed]);
     }
 }
