@@ -12,10 +12,10 @@ can flash with one esptool.py command:
 
     python -m esptool --chip esp32c3 -p COMx write_flash 0x0 dist/firmware.bin
 
-PlatformIO runs this as a "post:" extra_script.  The build directory and
-environment name are exposed via env vars (PROJECT_BUILD_DIR, PIOENV)
-that PlatformIO sets automatically, so we do NOT rely on `__file__`
-(which is undefined inside a SCons exec context).
+Important: PlatformIO invokes `post:` extra_scripts after EACH sub-target
+(bootloader, partitions, app, ...) is built.  We must therefore bail
+out quietly if the three inputs are not all present yet, and only
+produce the merged image on the final invocation.
 """
 
 import os
@@ -27,39 +27,46 @@ def _build_dir():
     pioenv = os.environ.get('PIOENV', 'esp32c3')
     if build_dir:
         return os.path.join(build_dir, pioenv)
-    # Fallback for CLI mode: assume CWD is the project root.
     return os.path.join(os.getcwd(), '.pio', 'build', pioenv)
 
 
 def _dist_dir():
-    # CWD is the project directory when invoked by PlatformIO.
     return os.path.join(os.getcwd(), 'dist')
 
 
-def _safe_load(bin_path, label):
+def _read_all(bin_path):
     with open(bin_path, "rb") as fp:
-        data = fp.read()
-    if not data:
-        sys.stderr.write("[merge_bin] %s is empty: %s\n" % (label, bin_path))
-        sys.exit(1)
-    return data
+        return fp.read()
 
 
 def main():
     build_dir = _build_dir()
+    bootloader_path = os.path.join(build_dir, "bootloader.bin")
+    partitions_path = os.path.join(build_dir, "partitions.bin")
+    firmware_path   = os.path.join(build_dir, "firmware.bin")
+
+    # Bail out quietly when called after a sub-target.  Only the call
+    # that finds all three files does the actual merge.
+    if not (os.path.isfile(bootloader_path) and
+            os.path.isfile(partitions_path) and
+            os.path.isfile(firmware_path)):
+        return 0
+
+    bootloader = _read_all(bootloader_path)
+    if len(bootloader) > 0x8000:
+        sys.stderr.write("[merge_bin] bootloader larger than 0x8000!\n")
+        return 2
+    partitions = _read_all(partitions_path)
+    if len(partitions) > 0x8000:
+        sys.stderr.write("[merge_bin] partitions larger than 0x8000!\n")
+        return 2
+    app = _read_all(firmware_path)
+
     dist_dir = _dist_dir()
     os.makedirs(dist_dir, exist_ok=True)
-
-    bootloader = _safe_load(os.path.join(build_dir, "bootloader.bin"), "bootloader")
-    partitions = _safe_load(os.path.join(build_dir, "partitions.bin"), "partitions")
-    app        = _safe_load(os.path.join(build_dir, "firmware.bin"),   "firmware")
-
     merged_path = os.path.join(dist_dir, "firmware.bin")
     with open(merged_path, "wb") as fp:
         fp.write(bootloader)
-        if len(bootloader) > 0x8000:
-            sys.stderr.write("[merge_bin] bootloader larger than 0x8000!\n")
-            sys.exit(2)
         fp.write(b"\xff" * (0x8000 - len(bootloader)))
         fp.write(partitions)
         fp.write(b"\xff" * (0x8000 - len(partitions)))
@@ -73,6 +80,5 @@ def main():
 if __name__ == "__main__":
     sys.exit(main())
 else:
-    # PlatformIO may import this file as a SCons post-script.  Run
-    # main() unconditionally so the merged image is always produced.
+    # PlatformIO may also import this file as a SCons post-script.
     main()
