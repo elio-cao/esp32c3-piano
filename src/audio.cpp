@@ -25,8 +25,6 @@
 #include <driver/ledc.h>
 #include <driver/timer.h>
 #include <esp_timer.h>
-#include <soc/ledc_periph.h>
-#include <soc/timer_group.h>
 
 #include <math.h>
 #include <string.h>
