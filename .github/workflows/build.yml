@@ -110,6 +110,21 @@ jobs:
             echo "WARN: HardwareSerial.cpp not found - skipping patch (b)"
           fi
 
+          # ----- (c) framework main.cpp calls Serial.begin() unconditionally ----
+          FRAMEWORK_MAIN_CPP="$FRAMEWORK_DIR/cores/esp32/main.cpp"
+          if [ -f "$FRAMEWORK_MAIN_CPP" ]; then
+            echo "Patching framework main.cpp at $FRAMEWORK_MAIN_CPP"
+            # Comment out any "Serial.<method>(...)" call so the
+            # framework's app_main() compiles even when Serial is
+            # not declared under ARDUINO_USB_CDC_ON_BOOT=1.
+            sed -i -E 's|^([ \t]*)Serial\.[A-Za-z_]+\(.*\);|\1/* patched: Serial disabled in CDC mode */;|' "$FRAMEWORK_MAIN_CPP"
+            echo "  - patched (Serial calls in main.cpp commented out)."
+            echo "--- main.cpp after patch ---"
+            grep -n 'Serial' "$FRAMEWORK_MAIN_CPP" || echo "  (no Serial references left in main.cpp)"
+          else
+            echo "WARN: framework main.cpp not found - skipping patch (c)"
+          fi
+
       # Step 3: real build using the now-patched framework.
       - name: Build firmware (PIO + merge_bin.py)
         run: pio run --environment esp32c3
