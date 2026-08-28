@@ -1,0 +1,63 @@
+name: Build ESP32-C3 piano firmware
+
+# Build the firmware on GitHub's infrastructure and upload the merged
+# `dist/firmware.bin` as a downloadable artifact.  Use this workflow when
+# you cannot run `pio run` locally (e.g. the RISC-V toolchain download is
+# being blocked by your local network).
+#
+# Trigger options
+# ---------------
+#   * automatic: every push / pull-request runs the build
+#   * manual:   click "Run workflow" on the Actions tab
+#
+# The resulting `piano-firmware` artifact contains a single
+# `firmware.bin` ready for `esptool write_flash 0x0 firmware.bin`.
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up Python (used by esptool merge_bin helper)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO Core
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install platformio
+          pio --version
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-
+
+      - name: Build firmware (PIO + merge_bin.py)
+        run: pio run --environment esp32c3
+
+      - name: Verify merged image with esptool
+        run: |
+          python -m pip install esptool
+          python -m esptool image-info dist/firmware.bin
+
+      - name: Upload merged firmware.bin
+        uses: actions/upload-artifact@v4
+        with:
+          name: piano-firmware
+          path: dist/firmware.bin
+          if-no-files-found: error
+          retention-days: 14
