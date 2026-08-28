@@ -37,6 +37,11 @@ float audio_getFrequency(void);
 /// True if the ISR is currently outputting non-silent samples.
 bool audio_isActive(void);
 
+/// Drive the envelope state machine.  Call from loop() at ~200 Hz
+/// (every 5 ms).  Defined as a weak symbol in audio.cpp so the user
+/// can override it (e.g. for a different envelope curve).
+void audio_tick(void);
+
 #ifdef __cplusplus
 }
 #endif
