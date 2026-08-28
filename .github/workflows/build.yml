@@ -1,18 +1,5 @@
 name: Build ESP32-C3 piano firmware
 
-# Build the firmware on GitHub's infrastructure and upload the merged
-# `dist/firmware.bin` as a downloadable artifact.  Use this workflow when
-# you cannot run `pio run` locally (e.g. the RISC-V toolchain download is
-# being blocked by your local network).
-#
-# Trigger options
-# ---------------
-#   * automatic: every push / pull-request runs the build
-#   * manual:   click "Run workflow" on the Actions tab
-#
-# The resulting `piano-firmware` artifact contains a single
-# `firmware.bin` ready for `esptool write_flash 0x0 firmware.bin`.
-
 on:
   push:
     branches: [ main, master ]
@@ -27,7 +14,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Set up Python (used by esptool merge_bin helper)
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -42,9 +29,55 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini', 'src/**') }}
           restore-keys: |
             pio-${{ runner.os }}-
+
+      # Patch the two known bugs in arduino-esp32 3.20017 (the version
+      # the espressif32 7.0.1 platform ships with):
+      #   (a) driver/touch_pad.h  #includes  driver/touch_sensor.h
+      #       which is S3-only and absent in the C3 SDK.
+      #   (b) HardwareSerial.cpp::serialEventRun references `Serial`
+      #       which is not declared under ARDUINO_USB_CDC_ON_BOOT=1.
+      # We work around both with a no-op header stub and an ifdef guard.
+      - name: Patch framework bugs
+        run: |
+          set -e
+          FRAMEWORK_DIR=~/.platformio/packages/framework-arduinoespressif32
+          if [ ! -d "$FRAMEWORK_DIR" ]; then
+            echo "Framework dir not found, skipping patches"
+            exit 0
+          fi
+          # (a) touch_pad.h broken include
+          TOUCH_PAD_H=$(find "$FRAMEWORK_DIR" -name 'touch_pad.h' -path '*esp32c3*' | head -1)
+          if [ -n "$TOUCH_PAD_H" ] && [ -f "$TOUCH_PAD_H" ]; then
+            echo "Patching $TOUCH_PAD_H"
+            sed -i 's|^#include "driver/touch_sensor.h"|#include "driver/touch_sensor.h"  // patched: stubbed for ESP32-C3|' "$TOUCH_PAD_H"
+            # Insert a stub right after the include block so the rest compiles.
+            STUB_PATH=$(dirname "$TOUCH_PAD_H")/touch_sensor.h
+            if [ ! -f "$STUB_PATH" ]; then
+              cat > "$STUB_PATH" <<'EOF'
+          // Stub for ESP32-C3 (arduino-esp32 3.20017 includes this from
+          // touch_pad.h even though the S3-only driver/touch_sensor.h is
+          // not shipped in the C3 toolchain).  This project does not
+          // use the new touch_sensor API; keys.cpp uses digitalRead().
+          #pragma once
+          #define TOUCH_SENSOR_MAX 0
+          typedef int touch_sensor_handle_t;
+          typedef int touch_sensor_config_t;
+          static inline esp_err_t touch_sensor_init(void) { return 0; }
+          static inline esp_err_t touch_sensor_config(touch_sensor_handle_t h, void* c) { (void)h; (void)c; return 0; }
+          static inline esp_err_t touch_sensor_read(touch_sensor_handle_t h, uint32_t* v) { (void)h; (void)v; return 0; }
+          EOF
+            fi
+          fi
+          # (b) HardwareSerial.cpp serialEventRun references Serial.
+          # We just need a no-op replacement; user code does not call Serial.
+          HW_SERIAL_CPP=$(find "$FRAMEWORK_DIR" -name 'HardwareSerial.cpp' | head -1)
+          if [ -n "$HW_SERIAL_CPP" ] && [ -f "$HW_SERIAL_CPP" ]; then
+            echo "Patching $HW_SERIAL_CPP"
+            sed -i 's|if(serialEvent \&\& Serial.available()) serialEvent();|/* patched: no Serial in CDC mode */ if (0 \&\& serialEvent) {}|' "$HW_SERIAL_CPP"
+          fi
 
       - name: Build firmware (PIO + merge_bin.py)
         run: pio run --environment esp32c3
