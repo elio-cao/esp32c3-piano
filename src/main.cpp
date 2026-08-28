@@ -1,108 +1,79 @@
-// main.cpp
-// Top-level glue for the ESP32-C3 electronic piano.  Wires together the
-// audio engine, the touch scanner and the amplifier-enable / status LED.
+// main.cpp  -  SELF-TEST / DIAGNOSTIC build (temporary)
 //
-// USB-CDC logging is intentionally disabled because `Serial` is not
-// consistently resolved by the Arduino-ESP32 3.x point releases shipped
-// on the platform (the `driver/touch_pad.h` is also broken on the C3
-// toolchain, which is why keys.cpp falls back to digitalRead).  If
-// you need boot logs, replace DBG(...) below with `Serial.print(...)`
-// and add `#include "USB.h"` to this file.
+// THIS IS A TEMPORARY DIAGNOSTIC VERSION, NOT THE REAL PIANO FIRMWARE.
+//
+// Goal: answer three questions in one flash, without touching any key:
+//   (1) Is the firmware actually running?   -> boot blinks on GPIO21
+//   (2) On which LED pin is the status LED? -> GPIO21 vs GPIO8
+//   (3) Is the amplifier / speaker chain OK and what is the SD polarity?
+//
+// Behaviour (repeats forever):
+//   - On boot, GPIO21 blinks 5 times (120 ms on / 120 ms off) as a marker.
+//   - After that it alternates two windows, each 2 seconds:
+//       [SD=HIGH window] GPIO21 LED ON,  GPIO8 OFF,  plays 659Hz then 494Hz
+//       [SD=LOW  window] GPIO21 LED OFF, GPIO8 ON,   plays 494Hz then 659Hz
+//   - So the LED tells you the current SD level window, and whether you hear
+//     a note during that window tells you the working logic of the amp.
+//
+// Interpretation:
+//   * No LED blinks at all          => the firmware is NOT running
+//     (flash issue, boot strapping, or chip held in reset).
+//   * One of the two LEDs blinks    => firmware IS running; the blinking pin
+//     is your status LED (GPIO21 or GPIO8).
+//   * Sound only while GPIO21 lit   => SD is active-HIGH (matches pins.h, OK).
+//   * Sound only while GPIO8  lit   => SD is active-LOW (flip AMP_SD_ACTIVE_LEVEL).
+//   * Never any sound              => speaker/amp/PWM or RC-filter path faulty.
 
 #include <Arduino.h>
 
 #include "audio.h"
-#include "keys.h"
-#include "notes.h"
 #include "pins.h"
 
-#define DBG(...)  do { } while (0)
+// Candidate alt status LED used by some board revisions (see README table).
+#define LED2_GPIO       GPIO_NUM_8
+#define LED2_ACTIVE     HIGH
 
-// Track the note that is currently feeding the synth.  When the same key
-// index is held, we do not want to re-trigger the envelope every tick.
-static int s_playingKey = -1;
+static const float kHighFreq = 659.25f;  // E5
+static const float kLowFreq  = 493.88f;  // B4
 
-// LED blink on boot.  We light the LED for 80 ms three times with 80 ms
-// gaps in between.
-static void ledSelfTest() {
-    for (int i = 0; i < 3; ++i) {
-        digitalWrite(LED_GPIO, LED_ACTIVE_LEVEL);
-        delay(80);
-        digitalWrite(LED_GPIO, LED_OFF_LEVEL);
-        delay(80);
-    }
+static void setAmpSd(int level) {
+    digitalWrite(AMP_SD_GPIO, level);
 }
 
 void setup() {
-    // Configure the GPIO-controlled outputs up front.
     pinMode(LED_GPIO, OUTPUT);
     digitalWrite(LED_GPIO, LED_OFF_LEVEL);
+    pinMode(LED2_GPIO, OUTPUT);
+    digitalWrite(LED2_GPIO, !LED2_ACTIVE);
     pinMode(AMP_SD_GPIO, OUTPUT);
-    digitalWrite(AMP_SD_GPIO, !AMP_SD_ACTIVE_LEVEL);  // muted at boot
+    setAmpSd(!AMP_SD_ACTIVE_LEVEL);
 
-    // Boot-time LED bling to confirm the LED is wired correctly.
-    ledSelfTest();
+    // Boot marker: 5 quick blinks on GPIO21.
+    for (int j = 0; j < 5; ++j) {
+        digitalWrite(LED_GPIO, LED_ACTIVE_LEVEL);
+        delay(120);
+        digitalWrite(LED_GPIO, LED_OFF_LEVEL);
+        delay(120);
+    }
 
-    // TTP223 has a 0.5 s power-on stable window during which touch
-    // detection is disabled.  Wait the full second so that the very
-    // first scan after keys_init() sees a stable part.
-    DBG("[main] Waiting 1.0 s for TTP223 warm-up...\n");
-    delay(TTP223_WARMUP_MS);
-
-    // Initialise the audio engine before the keys so that the first
-    // press already has a configured PWM channel.
     audio_init();
-    DBG("[main] audio_init done\n");
-
-    keys_init();
-    keys_logStatus();
-
-    DBG("[main] Ready - touch a key to play a note\n");
+    audio_setFrequency(kHighFreq);
 }
 
 void loop() {
-    static uint32_t lastKeysTick = 0;
-    static uint32_t lastEnvTick   = 0;
+    const uint32_t now  = millis();
+    const bool     sdHigh = ((now / 2000UL) % 2) == 0;  // 2s windows
+    const bool     useLow = ((now / 1000UL) & 1) != 0;  // toggle each 1s
 
-    const uint32_t now = millis();
+    setAmpSd(sdHigh ? AMP_SD_ACTIVE_LEVEL : (!AMP_SD_ACTIVE_LEVEL));
 
-    // Touch scan at KEY_SCAN_PERIOD_MS cadence.
-    if ((now - lastKeysTick) >= KEY_SCAN_PERIOD_MS) {
-        lastKeysTick = now;
-        const bool anyPressed = keys_tick();
-        const int pressed = keys_lastPressed();
+    // LED maps the SD window so the user knows the current phase.
+    digitalWrite(LED_GPIO,  sdHigh ? LED_ACTIVE_LEVEL : LED_OFF_LEVEL);
+    digitalWrite(LED2_GPIO, sdHigh ? (!LED2_ACTIVE)    : LED2_ACTIVE);
 
-        if (pressed != s_playingKey) {
-            if (pressed >= 0) {
-                audio_setFrequency(kNoteFreq[pressed]);
-                digitalWrite(AMP_SD_GPIO, AMP_SD_ACTIVE_LEVEL);
-                digitalWrite(LED_GPIO, LED_ACTIVE_LEVEL);
-                DBG("[main] Note on  key %d %s (%.2f Hz)\n",
-                    pressed, kKeyNoteNames[pressed], kNoteFreq[pressed]);
-            } else {
-                audio_setFrequency(0.0f);
-                // We leave the LED on for a moment so the player sees
-                // the key release; the amplifier mute is handled by the
-                // audio envelope returning to zero.
-                digitalWrite(LED_GPIO, LED_OFF_LEVEL);
-                digitalWrite(AMP_SD_GPIO, !AMP_SD_ACTIVE_LEVEL);
-                DBG("[main] Note off\n");
-            }
-            s_playingKey = pressed;
-        }
-        (void)anyPressed;  // kept for symmetry / future logging
-    }
+    audio_setFrequency(useLow ? kLowFreq : kHighFreq);
 
-    // Envelope update at ~5 ms cadence (200 Hz).  The audio engine
-    // exposes audio_tick() as a weak symbol; calling it advances the
-    // fade-in / fade-out state.
-    if ((now - lastEnvTick) >= 5) {
-        lastEnvTick = now;
-        audio_tick();
-    }
-
-    // We deliberately do not delay() here - the timers above handle
-    // the cadence.  A short no-op yield keeps the watchdog happy on
-    // some revisions of the ESP-IDF scheduler.
+    // Keep the synthesis envelope advancing.
+    for (int i = 0; i < 2; ++i) audio_tick();
     delay(1);
 }
