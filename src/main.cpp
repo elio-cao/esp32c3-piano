@@ -27,6 +27,17 @@ static const int kCand[] = {
 static const int kN = (int)(sizeof(kCand) / sizeof(kCand[0]));
 
 void setup() {
+    // --- Hardware workaround: netlist pulls GPIO0 to +5V via R4 -------------
+    // ESP32-C3 absolute maximum on any IO is VIO+0.3V (≈3.6V with 3V3 IO),
+    // so a 5V pull-up on GPIO0 forces the pad into clamp current and the
+    // chip cannot reach the application.  Calling gpio_reset_pin() releases
+    // any stray peripheral mux (USB-Serial/JTAG, MTCK, etc.), and leaving
+    // GPIO0 in INPUT_DISABLE keeps it from sourcing/sinking any current.
+    // This is the "software-only bypass" for key 7 (TP8).  The permanent fix
+    // is to move R4 from +5V to 3V3 on the PCB.
+    gpio_reset_pin((gpio_num_t)0);
+    pinMode(0, INPUT_DISABLE);
+
     pinMode(LED_GPIO, OUTPUT);
     pinMode(AMP_SD_GPIO, OUTPUT);
     digitalWrite(AMP_SD_GPIO, AMP_SD_ACTIVE_LEVEL);   // LOW = NS4165B enabled
