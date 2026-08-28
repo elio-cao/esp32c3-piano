@@ -66,7 +66,7 @@ static const int kTouchHalGpios[NUM_TOUCH_HAL_KEYS] = {
     GPIO_NUM_7,
 };
 
-#include "driver/touch_sensor.h"
+#include "driver/touch_pad.h"
 static const touch_pad_t kTouchHalPads[NUM_TOUCH_HAL_KEYS] = {
     TOUCH_PAD_NUM2,
     TOUCH_PAD_NUM3,
